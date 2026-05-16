@@ -124,3 +124,4 @@ If `idf.py` is not found after activating ESP-IDF:
 ## License
 
 Add your preferred license here before publishing.
+
