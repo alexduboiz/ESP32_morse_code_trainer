@@ -1,0 +1,11 @@
+build/
+sdkconfig
+sdkconfig.old
+esp-idf/
+managed_components/
+arduino_old_backup/
+components/
+.vscode/
+.devcontainer/
+*.code-workspace
+dependencies.lock

@@ -1,0 +1,15 @@
+menu "WiFi Configuration"
+
+config WIFI_SSID
+    string "WiFi SSID"
+    default ""
+    help
+      WiFi network SSID for station mode connection.
+
+config WIFI_PASSWORD
+    string "WiFi Password"
+    default ""
+    help
+      WiFi network password for station mode connection.
+
+endmenu
