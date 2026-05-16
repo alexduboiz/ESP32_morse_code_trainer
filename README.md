@@ -11,6 +11,54 @@ ESP32 Morse Trainer is an ESP-IDF application for decoding Morse code from a dua
 - Clear button and speed slider in the web interface
 - Status LED indicates an active symbol
 
+## Morse Code Reference
+
+The trainer decodes standard Morse code symbols. Use the following characters as a reference:
+
+- A: .-          N: -.
+- B: -...        O: ---
+- C: -.-.        P: .--.
+- D: -..         Q: --.-
+- E: .           R: .-.
+- F: ..-.        S: ...
+- G: --.         T: -
+- H: ....        U: ..-
+- I: ..          V: ...-
+- J: .---        W: .--
+- K: -.-         X: -..-
+- L: .-..        Y: -.--
+- M: --          Z: --..
+
+Numbers:
+
+- 0: -----
+- 1: .----
+- 2: ..---
+- 3: ...--
+- 4: ....-
+- 5: .....
+- 6: -....
+- 7: --...
+- 8: ---..
+- 9: -----
+
+Common punctuation:
+
+- Period (`.`): .-.-.-
+- Comma (`,`): --..--
+- Question mark (`?`): ..--..
+- Slash (`/`): -..-.
+- Parentheses (`(` `)`): -.--.-
+- Ampersand (`&`): .-...
+- Colon (`:`): ---...
+- Semicolon (`;`): -.-.-.
+- Equals (`=`): -...-
+- Plus (`+`): .-.-.
+- Hyphen (`-`): -....-
+- Underscore (`_`): ..--.-
+- Quotation mark (`"`): .-..-.
+- At sign (`@`): .--.-.
+
 ## Hardware
 
 This project is configured for the following GPIO pins:
