@@ -4,12 +4,15 @@ ESP32 Morse Trainer is an ESP-IDF application for decoding Morse code from a dua
 
 ## Features
 
-- Dual-paddle keyer support (dot and dash inputs)
+- Dual-paddle iambic keyer support (dot and dash inputs) with alternating symbol behavior when both paddles are held
 - Real-time Morse decoding to plain text
 - Browser-based live UI served from the ESP32
 - WebSocket updates for decoded text, symbol buffer, and speed changes
 - Clear button and speed slider in the web interface
 - Status LED indicates an active symbol
+- **Browser audio**: optional 650 Hz sine-wave tone synchronized to the LED (symbol start/end), toggled with a Sound button
+- **Virtual paddle buttons**: two large DIT/DAH squares in the web page for touchscreen use (iOS and Android); supports iambic dual-press by holding both simultaneously
+- Reliable WebSocket delivery via `TCP_NODELAY` and coalesced single-buffer sends
 
 ## Morse Code Reference
 
@@ -135,7 +138,9 @@ The paddle inputs are configured as input pins with pull-up resistors, so the sw
 - After startup, the board connects to the configured WiFi network.
 - Open a browser and navigate to the ESP32 IP address.
 - The page connects over WebSocket to receive live decoder updates.
-- Use the slider to adjust dot timing and the Clear button to reset the decoded text.
+- Use the slider to adjust dot timing and the **Clear** button to reset the decoded text.
+- Click **Sound: OFF** to enable browser audio; a 650 Hz tone plays in sync with each dot or dash.
+- On a touchscreen device, tap and hold the **DIT** or **DAH** squares below the slider to key morse. Press both simultaneously for iambic alternating output, identical to the physical paddle.
 
 ## Configuration
 
