@@ -389,9 +389,18 @@ static bool beginWebSocketHandshake(int clientSocket) {
                            "Connection: Upgrade\r\n"
                            "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
 
-    if (send(clientSocket, response.c_str(), response.size(), 0) < 0) {
-        ESP_LOGE(TAG, "WebSocket handshake send failed: %s", strerror(errno));
-        return false;
+    size_t totalSent = 0;
+    while (totalSent < response.size()) {
+        ssize_t s = send(clientSocket, response.c_str() + totalSent, response.size() - totalSent, 0);
+        if (s < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+                continue;
+            }
+            ESP_LOGE(TAG, "WebSocket handshake send failed: %s", strerror(errno));
+            return false;
+        }
+        totalSent += s;
     }
     return true;
 }
@@ -591,10 +600,6 @@ static bool processWebSocketFrame() {
 // Accept a new WebSocket client if a connection is pending.
 // Only one live WS client is allowed at a time.
 static void maybeAcceptWebSocketClient() {
-    if (wsClientSocket >= 0) {
-        return;
-    }
-
     if (wsServerSocket < 0) {
         return;
     }
@@ -621,6 +626,7 @@ static void maybeAcceptWebSocketClient() {
         close(client);
         return;
     }
+    closeWsClient();
     wsClientSocket = client;
     broadcastUpdate();
 }
