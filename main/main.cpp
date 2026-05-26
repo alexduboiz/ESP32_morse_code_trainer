@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
@@ -40,7 +41,7 @@ static const int DAH_PIN = 5;
 static const int RGB_PIN = 48;
 
 // Morse timing settings. dotTime is controlled by the web UI.
-static const int DOT_DEFAULT = 100;
+static const int DOT_DEFAULT = 200;
 static const int SPEED_MIN = 50;
 static const int SPEED_MAX = 250;
 
@@ -63,6 +64,8 @@ static uint64_t symbolEndMillis = 0;
 static uint64_t nextSymbolMillis = 0;
 static bool symbolActive = false;
 static bool ditNext = true;
+static bool virtualDitPressed = false;
+static bool virtualDahPressed = false;
 
 static const std::map<char, std::string> morseCode = {
     {'A', ".-"},   {'B', "-..."}, {'C', "-.-."}, {'D', "-.."}, {'E', "."},
@@ -118,6 +121,9 @@ static std::string htmlPage() {
     .control { margin-top: 14px; }
     .control label { display: inline-block; margin-right: 12px; }
     button { padding: 10px 16px; font-size: 1rem; }
+    #paddleContainer { display: flex; gap: 20px; margin-top: 14px; }
+    .paddle-btn { width: 120px; height: 120px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; border: 3px solid #555; background: #e0e0e0; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; }
+    .paddle-btn.active { background: #333; color: #fff; border-color: #111; }
   </style>
 </head>
 <body>
@@ -127,10 +133,15 @@ static std::string htmlPage() {
   <div class="control"><strong>Current symbol buffer:</strong> <span id="buffer">-</span></div>
   <div class="control">
     <button id="clearBtn">Clear</button>
+    <button id="soundBtn">Sound: OFF</button>
   </div>
   <div class="control">
     <label for="speedSlider">Keyer speed: <span id="speedValue"></span> ms</label>
     <input id="speedSlider" type="range" min="50" max="250" value="100" step="10">
+  </div>
+  <div id="paddleContainer" class="control">
+    <button id="ditBtn" class="paddle-btn">DIT</button>
+    <button id="dahBtn" class="paddle-btn">DAH</button>
   </div>
   <script>
     const decodedEl = document.getElementById('decoded');
@@ -138,6 +149,41 @@ static std::string htmlPage() {
     const speedValue = document.getElementById('speedValue');
     const speedSlider = document.getElementById('speedSlider');
     const clearBtn = document.getElementById('clearBtn');
+    const soundBtn = document.getElementById('soundBtn');
+
+    let soundEnabled = false;
+    let audioCtx = null;
+    let oscillator = null;
+    let gainNode = null;
+
+    soundBtn.addEventListener('click', () => {
+      soundEnabled = !soundEnabled;
+      soundBtn.textContent = 'Sound: ' + (soundEnabled ? 'ON' : 'OFF');
+      if (!soundEnabled) stopTone();
+    });
+
+    function startTone() {
+      if (!soundEnabled || oscillator) return;
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+      gainNode.connect(audioCtx.destination);
+      oscillator = audioCtx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(650, audioCtx.currentTime);
+      oscillator.connect(gainNode);
+      oscillator.start();
+    }
+
+    function stopTone() {
+      if (!oscillator) return;
+      oscillator.stop();
+      oscillator.disconnect();
+      oscillator = null;
+      gainNode.disconnect();
+      gainNode = null;
+    }
 
     function updateState(state) {
       decodedEl.textContent = state.decoded || '';
@@ -159,6 +205,8 @@ static std::string htmlPage() {
         const message = JSON.parse(event.data);
         if (message.type === 'update') {
           updateState(message);
+        } else if (message.type === 'tone') {
+          if (message.active) startTone(); else stopTone();
         }
       } catch (err) {
         console.error('Invalid WS message', err);
@@ -181,6 +229,29 @@ static std::string htmlPage() {
         socket.send(JSON.stringify({ action: 'clear' }));
       }
     });
+
+    let ditDown = false;
+    let dahDown = false;
+
+    function sendPaddleState() {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: 'paddle', dit: ditDown, dah: dahDown }));
+      }
+    }
+
+    function bindPaddle(el, setter) {
+      el.addEventListener('touchstart',  (e) => { e.preventDefault(); setter(true);  sendPaddleState(); }, { passive: false });
+      el.addEventListener('touchend',    (e) => { e.preventDefault(); setter(false); sendPaddleState(); }, { passive: false });
+      el.addEventListener('touchcancel', (e) => { e.preventDefault(); setter(false); sendPaddleState(); }, { passive: false });
+      el.addEventListener('mousedown',   ()  => { setter(true);  sendPaddleState(); });
+      el.addEventListener('mouseup',     ()  => { setter(false); sendPaddleState(); });
+      el.addEventListener('mouseleave',  ()  => { setter(false); sendPaddleState(); });
+    }
+
+    const ditBtn = document.getElementById('ditBtn');
+    const dahBtn = document.getElementById('dahBtn');
+    bindPaddle(ditBtn, (v) => { ditDown = v; ditBtn.classList.toggle('active', v); });
+    bindPaddle(dahBtn, (v) => { dahDown = v; dahBtn.classList.toggle('active', v); });
   </script>
 </body>
 </html>)rawliteral";
@@ -325,14 +396,19 @@ static bool beginWebSocketHandshake(int clientSocket) {
     return true;
 }
 
+static void sendWebSocketFrame(const std::string& payload);
+static void broadcastToneState(bool active);
+
 // Turn the status LED on while a symbol is active.
 static void setPixelForSymbol(char symbol) {
     gpio_set_level((gpio_num_t)RGB_PIN, 1);
+    broadcastToneState(true);
 }
 
 // Turn the status LED off when the current symbol ends.
 static void clearPixel() {
     gpio_set_level((gpio_num_t)RGB_PIN, 0);
+    broadcastToneState(false);
 }
 
 // Decode a full Morse code symbol string into a character.
@@ -383,42 +459,57 @@ static void handleWebSocketMessage(const std::string &message) {
             dotTime = value;
             broadcastUpdate();
         }
+    } else if (message.find("\"action\":\"paddle\"") != std::string::npos) {
+        virtualDitPressed = message.find("\"dit\":true") != std::string::npos;
+        virtualDahPressed = message.find("\"dah\":true") != std::string::npos;
+    }
+}
+
+static void sendWebSocketFrame(const std::string& payload) {
+    if (wsClientSocket < 0) return;
+
+    std::vector<uint8_t> frame;
+    frame.reserve(10 + payload.size());
+
+    frame.push_back(0x81);
+    size_t length = payload.size();
+    if (length <= 125) {
+        frame.push_back(static_cast<uint8_t>(length));
+    } else if (length <= 0xFFFF) {
+        frame.push_back(126);
+        frame.push_back((length >> 8) & 0xFF);
+        frame.push_back(length & 0xFF);
+    } else {
+        frame.push_back(127);
+        for (int i = 0; i < 8; i++)
+            frame.push_back((length >> (56 - 8 * i)) & 0xFF);
+    }
+    frame.insert(frame.end(),
+                 reinterpret_cast<const uint8_t*>(payload.data()),
+                 reinterpret_cast<const uint8_t*>(payload.data()) + payload.size());
+
+    ssize_t sent = send(wsClientSocket, frame.data(), frame.size(), 0);
+    if (sent != static_cast<ssize_t>(frame.size())) {
+        closeWsClient();
     }
 }
 
 static void broadcastUpdate() {
-    if (wsClientSocket < 0) {
-        return;
-    }
-
+    if (wsClientSocket < 0) return;
     std::string payload = "{\"type\":\"update\",\"decoded\":\"";
     payload += escapeJson(decodedText);
     payload += "\",\"buffer\":\"";
     payload += escapeJson(symbolBuffer);
     payload += "\",\"speed\":" + std::to_string(dotTime) + "}";
+    sendWebSocketFrame(payload);
+}
 
-    std::vector<uint8_t> header(10);
-    size_t headerLength = 0;
-    header[0] = 0x81;
-    size_t length = payload.size();
-    if (length <= 125) {
-        header[1] = static_cast<uint8_t>(length);
-        headerLength = 2;
-    } else if (length <= 0xFFFF) {
-        header[1] = 126;
-        header[2] = (length >> 8) & 0xFF;
-        header[3] = length & 0xFF;
-        headerLength = 4;
-    } else {
-        header[1] = 127;
-        for (int i = 0; i < 8; i++) {
-            header[2 + i] = (length >> (56 - 8 * i)) & 0xFF;
-        }
-        headerLength = 10;
-    }
-
-    send(wsClientSocket, header.data(), headerLength, 0);
-    send(wsClientSocket, payload.c_str(), payload.size(), 0);
+static void broadcastToneState(bool active) {
+    if (wsClientSocket < 0) return;
+    std::string payload = "{\"type\":\"tone\",\"active\":";
+    payload += active ? "true" : "false";
+    payload += "}";
+    sendWebSocketFrame(payload);
 }
 
 // Process a single WebSocket frame if it is available from the client.
@@ -523,6 +614,8 @@ static void maybeAcceptWebSocketClient() {
     }
     int flags = fcntl(client, F_GETFL, 0);
     fcntl(client, F_SETFL, flags | O_NONBLOCK);
+    int nodelay = 1;
+    setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
     if (!beginWebSocketHandshake(client)) {
         close(client);
@@ -537,8 +630,8 @@ static void checkForPauseActions();
 // Read the paddle inputs and start/stop Morse symbols.
 // The paddles are pulled up, so a pressed switch reads low.
 static void processPaddles() {
-    bool ditPressed = gpio_get_level((gpio_num_t)DIT_PIN) == 0;
-    bool dahPressed = gpio_get_level((gpio_num_t)DAH_PIN) == 0;
+    bool ditPressed = gpio_get_level((gpio_num_t)DIT_PIN) == 0 || virtualDitPressed;
+    bool dahPressed = gpio_get_level((gpio_num_t)DAH_PIN) == 0 || virtualDahPressed;
     uint64_t now = millis64();
 
     if (symbolActive) {
